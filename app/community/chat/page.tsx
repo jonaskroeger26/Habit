@@ -13,6 +13,14 @@ interface ChatRoom {
   name: string;
 }
 
+const FALLBACK_ROOMS: ChatRoom[] = [
+  { id: 'general', name: 'General Support' },
+  { id: 'smoking', name: 'Quit Smoking' },
+  { id: 'alcohol', name: 'Alcohol Free' },
+  { id: 'social-media', name: 'Digital Detox' },
+  { id: 'fitness', name: 'Fitness Journey' },
+]
+
 interface ChatMessage {
   id: string;
   room_id: string;
@@ -23,8 +31,10 @@ interface ChatMessage {
 }
 
 export default function ChatPage() {
-  const [rooms, setRooms] = useState<ChatRoom[]>([]);
-  const [currentRoom, setCurrentRoom] = useState<string>('');
+  // Keep the chat usable even if the database is not set up yet.
+  // Once Supabase loads, we replace this list with real rooms from `chat_rooms`.
+  const [rooms, setRooms] = useState<ChatRoom[]>(FALLBACK_ROOMS);
+  const [currentRoom, setCurrentRoom] = useState<string>(FALLBACK_ROOMS[0].id);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageText, setMessageText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -74,11 +84,11 @@ export default function ChatPage() {
           .limit(100);
 
         if (error) throw error;
-        setRooms(data ?? []);
-        if (!currentRoom && (data?.length ?? 0) > 0) setCurrentRoom((data as ChatRoom[])[0].id);
+        const nextRooms = (data && data.length > 0 ? (data as ChatRoom[]) : FALLBACK_ROOMS);
+        setRooms(nextRooms);
+        setCurrentRoom((prev) => (nextRooms.some((r) => r.id === prev) ? prev : nextRooms[0].id));
       } catch (err) {
         console.error('Error loading rooms:', err);
-        setRooms([]);
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
