@@ -144,7 +144,14 @@ export default function SettingsPage() {
 
       if (error) throw error;
       setMessage('Saved!');
+      // Update local state so the page reflects the saved value immediately.
+      if (nextAvatarUrl?.trim()) setAvatarUrl(nextAvatarUrl.trim());
       setAvatarFile(null);
+
+      // Ensure the dashboard/chat reload and pick up the new avatar_url.
+      window.setTimeout(() => {
+        window.location.href = '/dashboard';
+      }, 500);
     } catch (e) {
       console.error('Error saving settings:', e);
       const msg = (e as any)?.message || String(e);
