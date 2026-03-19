@@ -58,6 +58,18 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
     localStorage.setItem('wallet_login_address', walletPublicKey);
   }
 
+  async function ensureLoggedIn(walletPublicKey: string) {
+    if (typeof window === 'undefined') return;
+
+    const storedAddress = localStorage.getItem('wallet_login_address');
+    const storedSignature = localStorage.getItem('wallet_login_signature');
+
+    // If we already have a signature proof for this wallet, don't ask the user again.
+    if (storedAddress === walletPublicKey && storedSignature) return;
+
+    await signLoginChallenge(walletPublicKey);
+  }
+
   // Check if already connected on mount
   useEffect(() => {
     const checkConnection = async () => {
@@ -79,7 +91,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
             // Best-effort: signature is just a proof-of-intent for the app UI.
             // If it fails, we still keep the wallet connected.
             try {
-              await signLoginChallenge(pk);
+              await ensureLoggedIn(pk);
             } catch (e) {
               console.warn('Login signature failed:', e);
             }
@@ -108,7 +120,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
         setConnected(true);
 
         try {
-          await signLoginChallenge(pk);
+          await ensureLoggedIn(pk);
         } catch (e) {
           console.warn('Login signature failed:', e);
         }
