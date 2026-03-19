@@ -163,6 +163,7 @@ export default function ChatPage() {
     const newMessage = {
       user_id: userId,
       room_id: currentRoom,
+      user_display_name: userName,
       content: messageText.trim(),
     };
 
