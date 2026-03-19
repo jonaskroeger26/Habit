@@ -20,6 +20,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
   const [dashboardError, setDashboardError] = useState<string | null>(null);
+  const [checkInMessage, setCheckInMessage] = useState<string | null>(null);
 
   useEffect(() => {
     // Wait for wallet to initialize before checking
@@ -108,22 +109,46 @@ export default function DashboardPage() {
 
   const handleCheckIn = async (habitId: string) => {
     try {
+      setCheckInMessage(null);
+
       const habit = habits.find(h => h.id === habitId);
       if (!habit) return;
+
+      const now = new Date();
+      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const habitLast = habit.last_checkin ? new Date(habit.last_checkin) : null;
+
+      const diffDays = habitLast
+        ? Math.round((startOfToday.getTime() - new Date(habitLast.getFullYear(), habitLast.getMonth(), habitLast.getDate()).getTime()) / 86400000)
+        : null;
+
+      // Prevent multiple "check-ins" on the same day.
+      if (diffDays === 0) {
+        setCheckInMessage('You already checked in today.');
+        return;
+      }
+
+      // Basic streak logic:
+      // - If last check-in was yesterday => +1
+      // - If it was earlier => reset to 1
+      const nextStreak =
+        diffDays === 1 ? (habit.current_streak || 0) + 1 : 1;
 
       // Update habit streak
       await supabase
         .from('user_habits')
         .update({
-          current_streak: (habit.current_streak || 0) + 1,
-          last_checkin: new Date().toISOString(),
+          current_streak: nextStreak,
+          last_checkin: now.toISOString(),
         })
         .eq('id', habitId);
 
       // Reload habits
       loadUserData();
+      setCheckInMessage('Checked in!');
     } catch (error) {
       console.error('Error checking in:', error);
+      setCheckInMessage('Failed to check in. Please try again.');
     }
   };
 
@@ -172,6 +197,12 @@ export default function DashboardPage() {
         {dashboardError ? (
           <div className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
             {dashboardError}
+          </div>
+        ) : null}
+
+        {checkInMessage ? (
+          <div className="mb-6 rounded-lg border border-border/40 bg-card/50 p-3 text-sm">
+            {checkInMessage}
           </div>
         ) : null}
         {/* Header */}
