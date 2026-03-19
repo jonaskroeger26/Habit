@@ -181,9 +181,11 @@ export default function ChatPage() {
     setMessageText('');
 
     try {
-      const { error } = await supabaseClient
+      const { data, error } = await supabaseClient
         .from('chat_messages')
-        .insert(newMessage);
+        .insert(newMessage)
+        .select('id, room_id, user_id, user_display_name, content, created_at')
+        .single();
 
       if (error) {
         console.error('Error sending message:', error);
@@ -191,6 +193,21 @@ export default function ChatPage() {
         setMessageText(newMessage.content);
         const msg = (error as any)?.message || String(error);
         setSendError(msg || 'Failed to send message. Please try again.');
+      } else if (data) {
+        // Optimistic update so the sender sees their message instantly
+        const inserted = Array.isArray(data) ? data[0] : data;
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === inserted?.id)) return prev;
+          return [
+            ...prev,
+            {
+              ...(inserted as ChatMessage),
+              room_id: currentRoom,
+              user_id: userId,
+              user_display_name: userName,
+            },
+          ];
+        });
       }
     } catch (error) {
       console.error('Error sending message:', error);
