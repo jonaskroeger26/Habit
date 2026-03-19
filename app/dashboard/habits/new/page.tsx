@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Flame, ArrowLeft } from 'lucide-react';
-import { useEffect } from 'react';
+import { useWallet } from '@/lib/solana/wallet-provider';
 
 const PRESET_CATEGORIES = [
   { id: 'smoking', name: 'Smoking', icon: '🚬' },
@@ -20,6 +20,7 @@ const PRESET_CATEGORIES = [
 ];
 
 export default function NewHabitPage() {
+  const { publicKey, initialized } = useWallet();
   const router = useRouter();
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [customName, setCustomName] = useState('');
@@ -47,6 +48,7 @@ export default function NewHabitPage() {
   };
 
   const handleCreateHabit = async () => {
+    if (!publicKey) return;
     if (!selectedCategory || !customName.trim()) {
       alert('Please select a category and enter a habit name');
       return;
@@ -55,24 +57,45 @@ export default function NewHabitPage() {
     setLoading(true);
 
     try {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+      // Wallet-based user mapping (same approach as Dashboard)
+      const { data: existingUser, error: userSelectError } = await supabase
+        .from('users')
+        .select('id, display_name')
+        .eq('wallet_address', publicKey)
+        .maybeSingle();
 
-      if (!user) {
-        router.push('/');
-        return;
+      if (userSelectError) throw userSelectError;
+
+      let userId: string;
+
+      if (existingUser?.display_name) {
+        userId = existingUser.id;
+      } else {
+        const fallbackName = publicKey.slice(0, 8);
+        const { data: newUser, error: userInsertError } = await supabase
+          .from('users')
+          .insert({
+            wallet_address: publicKey,
+            display_name: fallbackName,
+            current_streak: 0,
+            best_streak: 0,
+          })
+          .select('id, display_name')
+          .single();
+
+        if (userInsertError) throw userInsertError;
+        if (!newUser?.id) throw new Error('Failed to create user');
+        userId = newUser.id;
       }
 
       const { data, error } = await supabase
         .from('user_habits')
         .insert({
-          user_id: user.id,
+          user_id: userId,
           category_id: selectedCategory,
-          custom_name: customName,
-          reason_to_quit: reason,
+          name: customName.trim(),
         })
-        .select()
+        .select('id')
         .single();
 
       if (error) {
@@ -90,6 +113,21 @@ export default function NewHabitPage() {
       setLoading(false);
     }
   };
+
+  if (!initialized) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-background via-card to-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block animate-spin mb-4">
+            <Flame className="w-8 h-8 text-accent" />
+          </div>
+          <p className="text-muted-foreground">Connecting wallet...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!publicKey) return null;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background via-card to-background">
