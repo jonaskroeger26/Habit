@@ -318,6 +318,15 @@ export default function DashboardPage() {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => window.location.href = '/dashboard/settings'}
+              className="gap-2"
+            >
+              <Settings className="w-4 h-4" />
+              Settings
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={handleSignOut}
             >
               Sign Out
@@ -360,15 +369,6 @@ export default function DashboardPage() {
             <Flame className="w-8 h-8 text-accent mb-2" />
             <div className="text-2xl font-bold text-foreground">{habits.length}</div>
             <div className="text-xs text-muted-foreground">Habits Tracked</div>
-          </div>
-
-          <div
-            onClick={() => window.location.href = '/dashboard/settings'}
-            className="bg-card/50 border border-border/40 rounded-lg p-6 hover:border-accent/40 hover:bg-card/80 transition-all cursor-pointer"
-          >
-            <Settings className="w-8 h-8 text-accent mb-2" />
-            <div className="font-semibold text-foreground text-sm">Settings</div>
-            <div className="text-xs text-muted-foreground">Username & photo</div>
           </div>
 
           <div
