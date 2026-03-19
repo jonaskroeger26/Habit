@@ -5,39 +5,37 @@ import { createClient } from '@/lib/supabase/client';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Flame, Send, Hash, Users } from 'lucide-react';
+import { Send, Hash } from 'lucide-react';
 import Link from 'next/link';
 
-// Chat rooms
-const ROOMS = [
-  { id: 'general', name: 'General Support', icon: Hash },
-  { id: 'smoking', name: 'Quit Smoking', icon: Flame },
-  { id: 'alcohol', name: 'Alcohol Free', icon: Users },
-  { id: 'social-media', name: 'Digital Detox', icon: Hash },
-  { id: 'fitness', name: 'Fitness Journey', icon: Users },
-];
+interface ChatRoom {
+  id: string;
+  name: string;
+}
 
 interface ChatMessage {
   id: string;
   room_id: string;
   user_id: string;
-  user_display_name: string;
+  user_display_name?: string;
   content: string;
   created_at: string;
 }
 
 export default function ChatPage() {
-  const [currentRoom, setCurrentRoom] = useState(ROOMS[0].id);
+  const [rooms, setRooms] = useState<ChatRoom[]>([]);
+  const [currentRoom, setCurrentRoom] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [messageText, setMessageText] = useState('');
   const [loading, setLoading] = useState(false);
   const [userName, setUserName] = useState('');
   const [userId, setUserId] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const supabaseRef = useRef(createClient());
-  const channelRef = useRef<any>(null);
+  const [sendError, setSendError] = useState<string | null>(null);
 
-  // Generate a random user ID if not set
+  const [supabaseClient, setSupabaseClient] = useState<ReturnType<typeof createClient> | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Local identity fallback (only used if you aren't authenticated).
   useEffect(() => {
     const storedUserId = localStorage.getItem('chat_user_id');
     const storedUserName = localStorage.getItem('chat_user_name');
@@ -46,7 +44,11 @@ export default function ChatPage() {
       setUserId(storedUserId);
       setUserName(storedUserName || storedUserId.slice(0, 8));
     } else {
-      const newUserId = `user_${Math.random().toString(36).substring(2, 15)}`;
+      // Use UUID-ish format to reduce chance of DB type errors.
+      const newUserId =
+        typeof crypto !== 'undefined' && 'randomUUID' in crypto
+          ? crypto.randomUUID()
+          : `user_${Math.random().toString(36).substring(2, 15)}`;
       const newUserName = `User_${newUserId.slice(-6)}`;
       localStorage.setItem('chat_user_id', newUserId);
       localStorage.setItem('chat_user_name', newUserName);
@@ -55,15 +57,42 @@ export default function ChatPage() {
     }
   }, []);
 
+  // Create Supabase client on the client-side (after env vars exist in the browser).
+  useEffect(() => {
+    setSupabaseClient(createClient());
+  }, []);
+
+  // Load available chat rooms (UUID IDs) from Supabase.
+  useEffect(() => {
+    if (!supabaseClient) return;
+
+    (async () => {
+      try {
+        const { data, error } = await supabaseClient
+          .from('chat_rooms')
+          .select('id, name')
+          .limit(100);
+
+        if (error) throw error;
+        setRooms(data ?? []);
+        if (!currentRoom && (data?.length ?? 0) > 0) setCurrentRoom((data as ChatRoom[])[0].id);
+      } catch (err) {
+        console.error('Error loading rooms:', err);
+        setRooms([]);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabaseClient]);
+
   // Load messages when room changes
   const loadMessages = useCallback(async () => {
-    if (!currentRoom) return;
+    if (!supabaseClient || !currentRoom) return;
     
     setLoading(true);
     try {
-      const { data, error } = await supabaseRef.current
+      const { data, error } = await supabaseClient
         .from('chat_messages')
-        .select('*')
+        .select('id, room_id, user_id, user_display_name, content, created_at')
         .eq('room_id', currentRoom)
         .order('created_at', { ascending: true })
         .limit(100);
@@ -80,15 +109,16 @@ export default function ChatPage() {
     } finally {
       setLoading(false);
     }
-  }, [currentRoom]);
+  }, [currentRoom, supabaseClient]);
 
   // Subscribe to new messages
-  const subscribeToMessages = useCallback(() => {
-    if (channelRef.current) {
-      supabaseRef.current.removeChannel(channelRef.current);
-    }
+  // Load messages and subscribe on room change
+  useEffect(() => {
+    if (!supabaseClient || !currentRoom) return;
 
-    const channel = supabaseRef.current
+    loadMessages();
+
+    const channel = supabaseClient
       .channel(`room:${currentRoom}`)
       .on(
         'postgres_changes',
@@ -102,7 +132,7 @@ export default function ChatPage() {
           const newMessage = payload.new as ChatMessage;
           setMessages((prev) => {
             // Avoid duplicates
-            if (prev.some(m => m.id === newMessage.id)) return prev;
+            if (prev.some((m) => m.id === newMessage.id)) return prev;
             return [...prev, newMessage];
           });
           setTimeout(() => {
@@ -112,20 +142,10 @@ export default function ChatPage() {
       )
       .subscribe();
 
-    channelRef.current = channel;
-  }, [currentRoom]);
-
-  // Load messages and subscribe on room change
-  useEffect(() => {
-    loadMessages();
-    subscribeToMessages();
-
     return () => {
-      if (channelRef.current) {
-        supabaseRef.current.removeChannel(channelRef.current);
-      }
+      supabaseClient.removeChannel(channel);
     };
-  }, [currentRoom, loadMessages, subscribeToMessages]);
+  }, [currentRoom, loadMessages, supabaseClient]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -137,20 +157,20 @@ export default function ChatPage() {
   // Send message
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!messageText.trim() || !userId) return;
+    if (!supabaseClient || !messageText.trim() || !userId || !currentRoom) return;
+    setSendError(null);
 
     const newMessage = {
       user_id: userId,
       room_id: currentRoom,
       content: messageText.trim(),
-      user_display_name: userName,
     };
 
     // Clear input immediately for better UX
     setMessageText('');
 
     try {
-      const { error } = await supabaseRef.current
+      const { error } = await supabaseClient
         .from('chat_messages')
         .insert(newMessage);
 
@@ -158,10 +178,12 @@ export default function ChatPage() {
         console.error('Error sending message:', error);
         // Restore the message on error
         setMessageText(newMessage.content);
+        setSendError('Failed to send message. Please try again.');
       }
     } catch (error) {
       console.error('Error sending message:', error);
       setMessageText(newMessage.content);
+      setSendError('Failed to send message. Please try again.');
     }
   };
 
@@ -178,7 +200,7 @@ export default function ChatPage() {
       <nav className="border-b border-border/40 bg-card/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
           <Link href="/" className="flex items-center gap-2">
-            <Flame className="w-5 h-5 text-accent" />
+            <Hash className="w-5 h-5 text-accent" />
             <span className="font-bold text-foreground">Habit Breaker</span>
           </Link>
           <div className="flex items-center gap-2">
@@ -199,9 +221,11 @@ export default function ChatPage() {
               Channels
             </h2>
             <div className="space-y-1">
-              {ROOMS.map((room) => {
-                const Icon = room.icon;
-                return (
+              {rooms.length === 0 ? (
+                <div className="text-sm text-muted-foreground">Loading channels...</div>
+              ) : (
+                rooms.map((room) => {
+                  return (
                   <button
                     key={room.id}
                     onClick={() => setCurrentRoom(room.id)}
@@ -211,11 +235,12 @@ export default function ChatPage() {
                         : 'text-muted-foreground hover:bg-card hover:text-foreground'
                     }`}
                   >
-                    <Icon className="w-4 h-4" />
+                    <Hash className="w-4 h-4" />
                     {room.name}
                   </button>
                 );
-              })}
+                })
+              )}
             </div>
           </div>
         </aside>
@@ -226,7 +251,7 @@ export default function ChatPage() {
           <div className="h-12 border-b border-border/40 px-4 flex items-center bg-card/30">
             <Hash className="w-5 h-5 text-muted-foreground mr-2" />
             <span className="font-medium text-foreground">
-              {ROOMS.find(r => r.id === currentRoom)?.name || 'Chat'}
+              {rooms.find((r) => r.id === currentRoom)?.name || 'Chat'}
             </span>
           </div>
 
@@ -240,7 +265,7 @@ export default function ChatPage() {
               <div className="flex flex-col items-center justify-center h-full text-center">
                 <Hash className="w-12 h-12 text-muted-foreground/50 mb-4" />
                 <h3 className="text-lg font-medium text-foreground mb-1">
-                  Welcome to #{ROOMS.find(r => r.id === currentRoom)?.name}
+                  Welcome{rooms.find((r) => r.id === currentRoom)?.name ? ` to #${rooms.find((r) => r.id === currentRoom)?.name}` : ''}
                 </h3>
                 <p className="text-muted-foreground text-sm">
                   Be the first to send a message!
@@ -254,13 +279,13 @@ export default function ChatPage() {
                 >
                   {msg.user_id !== userId && (
                     <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent text-sm font-medium">
-                      {msg.user_display_name.charAt(0).toUpperCase()}
+                      {(msg.user_display_name || 'U').charAt(0).toUpperCase()}
                     </div>
                   )}
                   <div className={`max-w-[70%] ${msg.user_id === userId ? 'order-1' : ''}`}>
                     <div className="flex items-baseline gap-2 mb-1">
                       <span className={`text-sm font-medium ${msg.user_id === userId ? 'text-accent' : 'text-foreground'}`}>
-                        {msg.user_id === userId ? 'You' : msg.user_display_name}
+                        {msg.user_id === userId ? 'You' : (msg.user_display_name || 'User')}
                       </span>
                       <span className="text-xs text-muted-foreground">
                         {formatTime(msg.created_at)}
@@ -286,17 +311,23 @@ export default function ChatPage() {
               <Input
                 value={messageText}
                 onChange={(e) => setMessageText(e.target.value)}
-                placeholder={`Message #${ROOMS.find(r => r.id === currentRoom)?.name || 'chat'}...`}
+                placeholder={
+                  currentRoom
+                    ? `Message #${rooms.find((r) => r.id === currentRoom)?.name || 'chat'}...`
+                    : 'Select a channel...'
+                }
                 className="flex-1 bg-background"
+                disabled={!supabaseClient || !currentRoom}
               />
               <Button 
                 type="submit" 
-                disabled={!messageText.trim()}
+                disabled={!supabaseClient || !currentRoom || !messageText.trim()}
                 className="bg-accent hover:bg-accent/90"
               >
                 <Send className="w-4 h-4" />
               </Button>
             </form>
+            {sendError ? <div className="text-sm text-destructive mt-2">{sendError}</div> : null}
           </div>
         </main>
       </div>
