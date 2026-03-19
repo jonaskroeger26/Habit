@@ -18,12 +18,14 @@ export default function SettingsPage() {
   const [avatarUrl, setAvatarUrl] = useState('');
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string>('');
+  const [avatarPreviewFailed, setAvatarPreviewFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!avatarFile) {
       setAvatarPreviewUrl('');
+      setAvatarPreviewFailed(false);
       return;
     }
     const objectUrl = URL.createObjectURL(avatarFile);
@@ -211,25 +213,33 @@ export default function SettingsPage() {
                 onChange={(e) => {
                   const file = e.target.files?.[0] ?? null;
                   setAvatarFile(file);
+                  setAvatarPreviewFailed(false);
                 }}
                 className="w-full"
               />
 
-              {avatarPreviewUrl ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={avatarPreviewUrl}
-                  alt="avatar preview"
-                  className="w-16 h-16 rounded-full object-cover mt-2"
-                />
-              ) : avatarUrl.trim() ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={avatarUrl.trim()}
-                  alt="avatar preview"
-                  className="w-16 h-16 rounded-full object-cover mt-2"
-                />
-              ) : null}
+              <div className="w-16 h-16 rounded-full bg-accent/20 flex items-center justify-center overflow-hidden mt-2">
+                {(() => {
+                  const src = avatarPreviewUrl || (avatarUrl.trim() ? avatarUrl.trim() : '');
+                  if (!src || avatarPreviewFailed) {
+                    return (
+                      <span className="text-accent text-sm font-medium">
+                        {(displayName || 'U').charAt(0).toUpperCase()}
+                      </span>
+                    );
+                  }
+
+                  return (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={src}
+                      alt=""
+                      className="w-16 h-16 object-cover"
+                      onError={() => setAvatarPreviewFailed(true)}
+                    />
+                  );
+                })()}
+              </div>
             </div>
 
             {message ? (
