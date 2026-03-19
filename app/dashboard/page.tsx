@@ -10,6 +10,7 @@ interface UserHabit {
   id: string;
   name: string;
   current_streak: number;
+  best_streak?: number | null;
   last_checkin: string;
 }
 
@@ -21,6 +22,7 @@ export default function DashboardPage() {
   const [userName, setUserName] = useState('');
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [checkInMessage, setCheckInMessage] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
     // Wait for wallet to initialize before checking
@@ -37,6 +39,7 @@ export default function DashboardPage() {
   const loadUserData = async () => {
     setLoading(true);
     setDashboardError(null);
+    setUserId(null);
     try {
       if (!publicKey) return;
       if (!supabase) throw new Error('Supabase is not configured (missing env vars).');
@@ -55,6 +58,7 @@ export default function DashboardPage() {
       if (userData?.display_name) {
         setUserName(userData.display_name);
         userId = userData.id;
+        setUserId(userId);
       } else {
         // Create user if doesn't exist
         const displayName = publicKey.slice(0, 8);
@@ -74,6 +78,7 @@ export default function DashboardPage() {
         if (newUser) {
           userId = newUser.id;
           setUserName(displayName);
+          setUserId(userId);
         } else {
           setUserName(publicKey.slice(0, 8));
           setLoading(false);
@@ -84,7 +89,7 @@ export default function DashboardPage() {
       // Load user's habits
       const { data: habitsData, error: habitsSelectError } = await supabase
         .from('user_habits')
-        .select('id, name, current_streak, last_checkin')
+        .select('id, name, current_streak, best_streak, last_checkin')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
@@ -133,15 +138,39 @@ export default function DashboardPage() {
       // - If it was earlier => reset to 1
       const nextStreak =
         diffDays === 1 ? (habit.current_streak || 0) + 1 : 1;
+      const nextBestStreak = Math.max(habit.best_streak || 0, nextStreak);
 
       // Update habit streak
       await supabase
         .from('user_habits')
         .update({
           current_streak: nextStreak,
+          best_streak: nextBestStreak,
           last_checkin: now.toISOString(),
         })
         .eq('id', habitId);
+
+      // Keep leaderboard in sync: leaderboard reads from `users.current_streak/best_streak`.
+      if (userId) {
+        const { data: userRow, error: userRowError } = await supabase
+          .from('users')
+          .select('id, current_streak, best_streak')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (userRowError) throw userRowError;
+
+        const newUserCurrent = Math.max(userRow?.current_streak || 0, nextStreak);
+        const newUserBest = Math.max(userRow?.best_streak || 0, nextBestStreak);
+
+        await supabase
+          .from('users')
+          .update({
+            current_streak: newUserCurrent,
+            best_streak: newUserBest,
+          })
+          .eq('id', userId);
+      }
 
       // Reload habits
       loadUserData();
