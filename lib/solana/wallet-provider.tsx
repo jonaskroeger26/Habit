@@ -45,6 +45,13 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
   // Check if already connected on mount
   useEffect(() => {
     const checkConnection = async () => {
+      // If the user explicitly clicked "logout", don't auto-connect again.
+      // Phantom can keep the last session around, and this app re-connects on mount.
+      if (localStorage.getItem('wallet_disconnected') === 'true') {
+        setInitialized(true);
+        return;
+      }
+
       if (typeof window !== 'undefined' && window.solana?.isPhantom) {
         try {
           const response = await window.solana.connect();
@@ -64,6 +71,8 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
   const connect = useCallback(async () => {
     if (typeof window === 'undefined') return;
     
+    // Re-enable auto-connect after an intentional connect.
+    localStorage.setItem('wallet_disconnected', 'false');
     setConnecting(true);
     try {
       // Check for Phantom wallet
@@ -86,6 +95,8 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
     if (typeof window !== 'undefined' && window.solana) {
       window.solana.disconnect();
     }
+    // Prevent the auto-connect-on-mount behavior after logout.
+    localStorage.setItem('wallet_disconnected', 'true');
     setPublicKey(null);
     setConnected(false);
   }, []);
