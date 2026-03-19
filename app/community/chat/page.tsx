@@ -189,12 +189,14 @@ export default function ChatPage() {
         console.error('Error sending message:', error);
         // Restore the message on error
         setMessageText(newMessage.content);
-        setSendError('Failed to send message. Please try again.');
+        const msg = (error as any)?.message || String(error);
+        setSendError(msg || 'Failed to send message. Please try again.');
       }
     } catch (error) {
       console.error('Error sending message:', error);
       setMessageText(newMessage.content);
-      setSendError('Failed to send message. Please try again.');
+      const msg = (error as any)?.message || String(error);
+      setSendError(msg || 'Failed to send message. Please try again.');
     }
   };
 
