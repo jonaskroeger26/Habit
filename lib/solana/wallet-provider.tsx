@@ -42,6 +42,22 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
   const [initialized, setInitialized] = useState(false);
   const [publicKey, setPublicKey] = useState<string | null>(null);
 
+  async function signLoginChallenge(walletPublicKey: string) {
+    if (typeof window === 'undefined' || !window.solana?.signMessage) return;
+
+    // Discord-like "login" UX: require user to sign a short challenge.
+    const nonce = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const message = `Habit Breaker login nonce: ${nonce}`;
+
+    const encodedMessage = new TextEncoder().encode(message);
+    const signedMessage = await window.solana.signMessage(encodedMessage, 'utf8');
+    const signatureB64 = Buffer.from(signedMessage.signature).toString('base64');
+
+    localStorage.setItem('wallet_login_nonce', nonce);
+    localStorage.setItem('wallet_login_signature', signatureB64);
+    localStorage.setItem('wallet_login_address', walletPublicKey);
+  }
+
   // Check if already connected on mount
   useEffect(() => {
     const checkConnection = async () => {
@@ -56,8 +72,17 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
         try {
           const response = await window.solana.connect();
           if (response.publicKey) {
-            setPublicKey(response.publicKey.toString());
+            const pk = response.publicKey.toString();
+            setPublicKey(pk);
             setConnected(true);
+
+            // Best-effort: signature is just a proof-of-intent for the app UI.
+            // If it fails, we still keep the wallet connected.
+            try {
+              await signLoginChallenge(pk);
+            } catch (e) {
+              console.warn('Login signature failed:', e);
+            }
           }
         } catch {
           // User hasn't connected yet, that's fine
@@ -78,8 +103,15 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
       // Check for Phantom wallet
       if (window.solana?.isPhantom) {
         const response = await window.solana.connect();
-        setPublicKey(response.publicKey.toString());
+        const pk = response.publicKey.toString();
+        setPublicKey(pk);
         setConnected(true);
+
+        try {
+          await signLoginChallenge(pk);
+        } catch (e) {
+          console.warn('Login signature failed:', e);
+        }
       } else {
         // No wallet found, open Phantom website
         window.open('https://phantom.app/', '_blank');
@@ -95,6 +127,9 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
     if (typeof window !== 'undefined' && window.solana) {
       window.solana.disconnect();
     }
+    localStorage.removeItem('wallet_login_nonce');
+    localStorage.removeItem('wallet_login_signature');
+    localStorage.removeItem('wallet_login_address');
     // Prevent the auto-connect-on-mount behavior after logout.
     localStorage.setItem('wallet_disconnected', 'true');
     setPublicKey(null);
