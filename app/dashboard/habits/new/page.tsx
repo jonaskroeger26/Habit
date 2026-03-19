@@ -104,8 +104,9 @@ export default function NewHabitPage() {
         return;
       }
 
-      // Redirect to habit detail page
-      router.push(`/dashboard/habits/${data.id}`);
+      // This app does not have a habit detail route yet.
+      // Redirect back to dashboard so the new habit appears.
+      router.push('/dashboard');
     } catch (error) {
       console.error('Error:', error);
       alert('An error occurred. Please try again.');
