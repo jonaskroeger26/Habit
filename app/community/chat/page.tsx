@@ -414,7 +414,7 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       {/* Navigation */}
       <nav className="border-b border-border/40 bg-card/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
