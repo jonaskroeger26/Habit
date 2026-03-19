@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { createClient } from '@/lib/supabase/client';
-import { Card } from '@/components/ui/card';
+import { useWallet } from '@/lib/solana/wallet-provider';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Send, Hash } from 'lucide-react';
@@ -21,6 +21,18 @@ const FALLBACK_ROOMS: ChatRoom[] = [
   { id: 'fitness', name: 'Fitness Journey' },
 ]
 
+// Basic shortcode -> emoji mapping.
+// You can expand this as you add more emotes.
+const EMOTE_MAP: Record<string, string> = {
+  fire: '🔥',
+  heart: '❤️',
+  clap: '👏',
+  strong: '💪',
+  smile: '😊',
+  wink: '😉',
+  thumbs_up: '👍',
+};
+
 interface ChatMessage {
   id: string;
   room_id: string;
@@ -31,6 +43,8 @@ interface ChatMessage {
 }
 
 export default function ChatPage() {
+  const { publicKey, initialized } = useWallet();
+
   // Keep the chat usable even if the database is not set up yet.
   // Once Supabase loads, we replace this list with real rooms from `chat_rooms`.
   const [rooms, setRooms] = useState<ChatRoom[]>(FALLBACK_ROOMS);
@@ -71,6 +85,54 @@ export default function ChatPage() {
   useEffect(() => {
     setSupabaseClient(createClient());
   }, []);
+
+  // If the user has connected a wallet, prefer their profile (for consistent "You" rendering).
+  useEffect(() => {
+    if (!initialized || !publicKey || !supabaseClient) return;
+
+    (async () => {
+      try {
+        const { data: userRow, error } = await supabaseClient
+          .from('users')
+          .select('id, display_name')
+          .eq('wallet_address', publicKey)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        const fallbackName = publicKey.slice(0, 8);
+
+        if (userRow?.id) {
+          setUserId(userRow.id);
+          setUserName(userRow.display_name || fallbackName);
+          localStorage.setItem('chat_user_id', userRow.id);
+          localStorage.setItem('chat_user_name', userRow.display_name || fallbackName);
+        } else {
+          const { data: newUser, error: insertError } = await supabaseClient
+            .from('users')
+            .insert({
+              wallet_address: publicKey,
+              display_name: fallbackName,
+              current_streak: 0,
+              best_streak: 0,
+            })
+            .select('id, display_name')
+            .single();
+
+          if (insertError) throw insertError;
+
+          if (newUser?.id) {
+            setUserId(newUser.id);
+            setUserName(newUser.display_name || fallbackName);
+            localStorage.setItem('chat_user_id', newUser.id);
+            localStorage.setItem('chat_user_name', newUser.display_name || fallbackName);
+          }
+        }
+      } catch (e) {
+        console.error('Error loading wallet profile for chat:', e);
+      }
+    })();
+  }, [publicKey, initialized, supabaseClient]);
 
   // Load available chat rooms (UUID IDs) from Supabase.
   useEffect(() => {
@@ -224,6 +286,66 @@ export default function ChatPage() {
     });
   };
 
+  const URL_REGEX = /(https?:\/\/[^\s]+)/i;
+
+  const extractFirstUrl = (text: string) => {
+    const match = text.match(URL_REGEX);
+    return match?.[0] ?? null;
+  };
+
+  const isGifUrl = (url: string) => {
+    const u = url.toLowerCase();
+    return u.includes('.gif') || u.includes('giphy') || u.includes('tenor');
+  };
+
+  const renderEmotes = (text: string) => {
+    // Supports :fire: style shortcodes.
+    const parts: Array<string | { emote: string }> = [];
+    const re = /:([a-zA-Z0-9_]+):/g;
+    let lastIndex = 0;
+    let m: RegExpExecArray | null = null;
+
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > lastIndex) parts.push(text.slice(lastIndex, m.index));
+      parts.push({ emote: m[1].toLowerCase() });
+      lastIndex = re.lastIndex;
+    }
+
+    if (lastIndex < text.length) parts.push(text.slice(lastIndex));
+
+    return (
+      <>
+        {parts.map((p, idx) => {
+          if (typeof p === 'string') return <span key={idx}>{p}</span>;
+          const emoji = EMOTE_MAP[p.emote];
+          return (
+            <span key={idx}>
+              {emoji ?? `:${p.emote}:`}
+            </span>
+          );
+        })}
+      </>
+    );
+  };
+
+  const renderContent = (content: string) => {
+    const trimmed = (content ?? '').trim();
+    const firstUrl = extractFirstUrl(trimmed);
+
+    // If the message is basically a GIF URL, render it as an image.
+    if (firstUrl && trimmed === firstUrl && isGifUrl(firstUrl)) {
+      return (
+        <img
+          src={firstUrl}
+          alt="gif"
+          className="max-w-[260px] max-h-[240px] rounded-md object-contain"
+        />
+      );
+    }
+
+    return renderEmotes(trimmed);
+  };
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Navigation */}
@@ -326,7 +448,9 @@ export default function ChatPage() {
                         ? 'bg-accent text-accent-foreground' 
                         : 'bg-card border border-border/40'
                     }`}>
-                      <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                      <div className="text-sm whitespace-pre-wrap break-words">
+                        {renderContent(msg.content)}
+                      </div>
                     </div>
                   </div>
                 </div>

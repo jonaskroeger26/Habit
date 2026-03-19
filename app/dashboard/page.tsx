@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useWallet } from '@/lib/solana/wallet-provider';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
-import { Flame, Plus, MessageCircle, TrendingUp } from 'lucide-react';
+import { Flame, Plus, MessageCircle, TrendingUp, Settings } from 'lucide-react';
 
 interface UserHabit {
   id: string;
@@ -360,6 +360,15 @@ export default function DashboardPage() {
             <Flame className="w-8 h-8 text-accent mb-2" />
             <div className="text-2xl font-bold text-foreground">{habits.length}</div>
             <div className="text-xs text-muted-foreground">Habits Tracked</div>
+          </div>
+
+          <div
+            onClick={() => window.location.href = '/dashboard/settings'}
+            className="bg-card/50 border border-border/40 rounded-lg p-6 hover:border-accent/40 hover:bg-card/80 transition-all cursor-pointer"
+          >
+            <Settings className="w-8 h-8 text-accent mb-2" />
+            <div className="font-semibold text-foreground text-sm">Settings</div>
+            <div className="text-xs text-muted-foreground">Username & photo</div>
           </div>
 
           <div
