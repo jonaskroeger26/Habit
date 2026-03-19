@@ -19,6 +19,7 @@ export default function DashboardPage() {
   const [habits, setHabits] = useState<UserHabit[]>([]);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
+  const [dashboardError, setDashboardError] = useState<string | null>(null);
 
   useEffect(() => {
     // Wait for wallet to initialize before checking
@@ -34,15 +35,19 @@ export default function DashboardPage() {
 
   const loadUserData = async () => {
     setLoading(true);
+    setDashboardError(null);
     try {
       if (!publicKey) return;
+      if (!supabase) throw new Error('Supabase is not configured (missing env vars).');
 
       // Get or create user profile by wallet address
-      const { data: userData } = await supabase
+      const { data: userData, error: userSelectError } = await supabase
         .from('users')
         .select('id, display_name')
         .eq('wallet_address', publicKey)
-        .single();
+        .maybeSingle();
+
+      if (userSelectError) throw userSelectError;
 
       let userId: string;
 
@@ -52,7 +57,7 @@ export default function DashboardPage() {
       } else {
         // Create user if doesn't exist
         const displayName = publicKey.slice(0, 8);
-        const { data: newUser } = await supabase
+        const { data: newUser, error: userInsertError } = await supabase
           .from('users')
           .insert({
             wallet_address: publicKey,
@@ -62,6 +67,8 @@ export default function DashboardPage() {
           })
           .select()
           .single();
+
+        if (userInsertError) throw userInsertError;
         
         if (newUser) {
           userId = newUser.id;
@@ -74,17 +81,20 @@ export default function DashboardPage() {
       }
 
       // Load user's habits
-      const { data: habitsData } = await supabase
+      const { data: habitsData, error: habitsSelectError } = await supabase
         .from('user_habits')
         .select('id, name, current_streak, last_checkin')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
+
+      if (habitsSelectError) throw habitsSelectError;
 
       if (habitsData) {
         setHabits(habitsData);
       }
     } catch (error) {
       console.error('Error loading user data:', error);
+      setDashboardError((error as any)?.message || String(error));
       setUserName(publicKey?.slice(0, 8) || 'User');
     } finally {
       setLoading(false);
@@ -159,6 +169,11 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        {dashboardError ? (
+          <div className="mb-6 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive">
+            {dashboardError}
+          </div>
+        ) : null}
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-foreground mb-2">Dashboard</h1>
