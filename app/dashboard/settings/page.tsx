@@ -8,14 +8,31 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Flame } from 'lucide-react';
 
+const AVATAR_BUCKET = 'avatars';
+
 export default function SettingsPage() {
   const { publicKey, initialized } = useWallet();
   const supabase = createClient();
 
   const [displayName, setDisplayName] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreviewUrl('');
+      return;
+    }
+    const objectUrl = URL.createObjectURL(avatarFile);
+    setAvatarPreviewUrl(objectUrl);
+
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [avatarFile]);
 
   useEffect(() => {
     if (!initialized || !publicKey) return;
@@ -90,21 +107,51 @@ export default function SettingsPage() {
         return;
       }
 
+      let nextAvatarUrl = avatarUrl;
+
+      // If user selected a file, upload it to Supabase Storage first.
+      if (avatarFile) {
+        const fileName = avatarFile.name || 'avatar';
+        const ext = (fileName.split('.').pop() || 'png').toLowerCase();
+        const path = `${publicKey}/avatar.${ext}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from(AVATAR_BUCKET)
+          .upload(path, avatarFile, {
+            upsert: true,
+            contentType: avatarFile.type || 'image/png',
+          });
+
+        if (uploadError) throw uploadError;
+
+        const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+        nextAvatarUrl = data?.publicUrl || '';
+      }
+
+      const updatePayload: any = {
+        display_name: name,
+      };
+
+      // Only set avatar_url if we have a value to store.
+      if (nextAvatarUrl?.trim()) {
+        updatePayload.avatar_url = nextAvatarUrl.trim();
+      }
+
       const { error } = await supabase
         .from('users')
-        .update({
-          display_name: name,
-          ...(avatarUrl.trim() ? { avatar_url: avatarUrl.trim() } : {}),
-        })
+        .update(updatePayload)
         .eq('wallet_address', publicKey);
 
       if (error) throw error;
       setMessage('Saved!');
+      setAvatarFile(null);
     } catch (e) {
       console.error('Error saving settings:', e);
       const msg = (e as any)?.message || String(e);
       if (msg.toLowerCase().includes('avatar_url') || msg.toLowerCase().includes('column')) {
         setMessage('Failed to save avatar: add `avatar_url` column to `public.users`.');
+      } else if (msg.toLowerCase().includes('bucket') || msg.toLowerCase().includes('storage')) {
+        setMessage(`Failed to upload avatar. Create a Storage bucket named \`${AVATAR_BUCKET}\` and allow uploads.`);
       } else {
         setMessage('Failed to save.');
       }
@@ -150,13 +197,26 @@ export default function SettingsPage() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-foreground">Photo URL</label>
-              <Input
-                value={avatarUrl}
-                onChange={(e) => setAvatarUrl(e.target.value)}
-                placeholder="https://.../avatar.png"
+              <label className="text-sm font-semibold text-foreground">Photo</label>
+              <input
+                type="file"
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  setAvatarFile(file);
+                }}
+                className="w-full"
               />
-              {avatarUrl.trim() ? (
+
+              {avatarPreviewUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={avatarPreviewUrl}
+                  alt="avatar preview"
+                  className="w-16 h-16 rounded-full object-cover mt-2"
+                />
+              ) : avatarUrl.trim() ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={avatarUrl.trim()}
                   alt="avatar preview"
