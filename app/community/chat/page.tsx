@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { useWallet } from '@/lib/solana/wallet-provider';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Send, Hash } from 'lucide-react';
+import { Send, Hash, Smile } from 'lucide-react';
 import Link from 'next/link';
 
 interface ChatRoom {
@@ -33,6 +33,16 @@ const EMOTE_MAP: Record<string, string> = {
   thumbs_up: '👍',
 };
 
+const EMOTE_BUTTONS = [
+  'smile',
+  'wink',
+  'thumbs_up',
+  'heart',
+  'fire',
+  'clap',
+  'strong',
+] as const;
+
 interface ChatMessage {
   id: string;
   room_id: string;
@@ -55,6 +65,7 @@ export default function ChatPage() {
   const [userName, setUserName] = useState('');
   const [userId, setUserId] = useState('');
   const [sendError, setSendError] = useState<string | null>(null);
+  const [emotesOpen, setEmotesOpen] = useState(false);
 
   const [supabaseClient, setSupabaseClient] = useState<ReturnType<typeof createClient> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -461,26 +472,61 @@ export default function ChatPage() {
 
           {/* Message Input */}
           <div className="p-4 border-t border-border/40 bg-card/30">
-            <form onSubmit={handleSendMessage} className="flex gap-2">
-              <Input
-                value={messageText}
-                onChange={(e) => setMessageText(e.target.value)}
-                placeholder={
-                  currentRoom
-                    ? `Message #${rooms.find((r) => r.id === currentRoom)?.name || 'chat'}...`
-                    : 'Select a channel...'
-                }
-                className="flex-1 bg-background"
-                disabled={!supabaseClient || !currentRoom}
-              />
-              <Button 
-                type="submit" 
-                disabled={!supabaseClient || !currentRoom || !messageText.trim()}
-                className="bg-accent hover:bg-accent/90"
-              >
-                <Send className="w-4 h-4" />
-              </Button>
-            </form>
+            <div className="relative">
+              {emotesOpen ? (
+                <div className="absolute bottom-full left-0 mb-2 rounded-md border border-border/40 bg-card/95 p-2 shadow-lg z-10">
+                  <div className="grid grid-cols-4 gap-2">
+                    {EMOTE_BUTTONS.map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => {
+                          setMessageText((prev) => `${prev}${prev ? ' ' : ''}:${key}:`);
+                          setEmotesOpen(false);
+                        }}
+                        className="flex items-center justify-center h-9 w-9 rounded-md bg-background hover:bg-card border border-border/40 transition-colors"
+                        aria-label={`Insert :${key}:`}
+                      >
+                        <span className="text-lg">{EMOTE_MAP[key]}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              <form onSubmit={handleSendMessage} className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!currentRoom}
+                  onClick={() => setEmotesOpen((v) => !v)}
+                  className="h-9 w-10 p-0 flex items-center justify-center"
+                  aria-label="Open emotes"
+                >
+                  <Smile className="w-4 h-4" />
+                </Button>
+
+                <Input
+                  value={messageText}
+                  onChange={(e) => setMessageText(e.target.value)}
+                  placeholder={
+                    currentRoom
+                      ? `Message #${rooms.find((r) => r.id === currentRoom)?.name || 'chat'}...`
+                      : 'Select a channel...'
+                  }
+                  className="flex-1 bg-background"
+                  disabled={!supabaseClient || !currentRoom}
+                />
+
+                <Button
+                  type="submit"
+                  disabled={!supabaseClient || !currentRoom || !messageText.trim()}
+                  className="bg-accent hover:bg-accent/90"
+                >
+                  <Send className="w-4 h-4" />
+                </Button>
+              </form>
+            </div>
             {sendError ? <div className="text-sm text-destructive mt-2">{sendError}</div> : null}
           </div>
         </main>
