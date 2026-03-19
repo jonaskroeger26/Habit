@@ -20,6 +20,7 @@ export default function DashboardPage() {
   const [habits, setHabits] = useState<UserHabit[]>([]);
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('');
+  const [userAvatarUrl, setUserAvatarUrl] = useState<string>('');
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [checkInMessage, setCheckInMessage] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
@@ -92,6 +93,20 @@ export default function DashboardPage() {
           setLoading(false);
           return;
         }
+      }
+
+      // Best-effort avatar load (skip if `avatar_url` column doesn't exist yet).
+      try {
+        const { data: avatarData } = await supabase
+          .from('users')
+          .select('avatar_url')
+          .eq('id', userId)
+          .maybeSingle();
+
+        if (avatarData?.avatar_url) setUserAvatarUrl(avatarData.avatar_url);
+        else setUserAvatarUrl('');
+      } catch {
+        setUserAvatarUrl('');
       }
 
       // Load user's habits
@@ -314,7 +329,22 @@ export default function DashboardPage() {
             <span className="text-xl font-bold text-foreground">Habit Breaker</span>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-muted-foreground text-sm">{userName}</span>
+            <div className="flex items-center gap-2">
+              {userAvatarUrl ? (
+                // Discord-like circular avatar
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={userAvatarUrl}
+                  alt="avatar"
+                  className="w-8 h-8 rounded-full object-cover"
+                />
+              ) : (
+                <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent text-sm font-medium">
+                  {(userName || 'U').charAt(0).toUpperCase()}
+                </div>
+              )}
+              <span className="text-muted-foreground text-sm">{userName}</span>
+            </div>
             <Button
               variant="outline"
               size="sm"

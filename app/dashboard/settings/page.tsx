@@ -25,7 +25,7 @@ export default function SettingsPage() {
       try {
         const { data: userRow, error } = await supabase
           .from('users')
-          .select('id, display_name, avatar_url, wallet_address')
+          .select('id, display_name, wallet_address')
           .eq('wallet_address', publicKey)
           .maybeSingle();
 
@@ -35,7 +35,7 @@ export default function SettingsPage() {
 
         if (userRow?.id) {
           setDisplayName(userRow.display_name || fallbackName);
-          setAvatarUrl(userRow.avatar_url || '');
+          setAvatarUrl('');
         } else {
           // Create a minimal profile so settings can be saved.
           const { data: newUser, error: insertError } = await supabase
@@ -43,17 +43,31 @@ export default function SettingsPage() {
             .insert({
               wallet_address: publicKey,
               display_name: fallbackName,
-              avatar_url: null,
               current_streak: 0,
               best_streak: 0,
             })
-            .select('id, display_name, avatar_url')
+            .select('id, display_name')
             .single();
 
           if (insertError) throw insertError;
 
           setDisplayName(newUser?.display_name || fallbackName);
-          setAvatarUrl(newUser?.avatar_url || '');
+          setAvatarUrl('');
+        }
+
+        // Best-effort avatar load (skip if `avatar_url` column doesn't exist yet).
+        try {
+          const { data: avatarData, error: avatarError } = await supabase
+            .from('users')
+            .select('avatar_url')
+            .eq('wallet_address', publicKey)
+            .maybeSingle();
+
+          if (!avatarError && avatarData?.avatar_url) {
+            setAvatarUrl(avatarData.avatar_url);
+          }
+        } catch {
+          // ignore
         }
       } catch (e) {
         console.error('Error loading settings:', e);
@@ -80,7 +94,7 @@ export default function SettingsPage() {
         .from('users')
         .update({
           display_name: name,
-          avatar_url: avatarUrl.trim() ? avatarUrl.trim() : null,
+          ...(avatarUrl.trim() ? { avatar_url: avatarUrl.trim() } : {}),
         })
         .eq('wallet_address', publicKey);
 
@@ -88,7 +102,12 @@ export default function SettingsPage() {
       setMessage('Saved!');
     } catch (e) {
       console.error('Error saving settings:', e);
-      setMessage('Failed to save.');
+      const msg = (e as any)?.message || String(e);
+      if (msg.toLowerCase().includes('avatar_url') || msg.toLowerCase().includes('column')) {
+        setMessage('Failed to save avatar: add `avatar_url` column to `public.users`.');
+      } else {
+        setMessage('Failed to save.');
+      }
     } finally {
       setSaving(false);
     }

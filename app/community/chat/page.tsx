@@ -70,6 +70,9 @@ export default function ChatPage() {
   const [supabaseClient, setSupabaseClient] = useState<ReturnType<typeof createClient> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const [userAvatarUrl, setUserAvatarUrl] = useState<string>('');
+  const [avatarByUserId, setAvatarByUserId] = useState<Record<string, string>>({});
+
   // Local identity fallback (only used if you aren't authenticated).
   useEffect(() => {
     const storedUserId = localStorage.getItem('chat_user_id');
@@ -139,11 +142,64 @@ export default function ChatPage() {
             localStorage.setItem('chat_user_name', newUser.display_name || fallbackName);
           }
         }
+
+        // Best-effort avatar load (avoid crashing if avatar_url column doesn't exist yet).
+        try {
+          if (userRow?.id) {
+            const { data: avatarData } = await supabaseClient
+              .from('users')
+              .select('avatar_url')
+              .eq('id', userRow.id)
+              .maybeSingle();
+
+            if (avatarData?.avatar_url) setUserAvatarUrl(avatarData.avatar_url);
+          } else if (newUser?.id) {
+            const { data: avatarData } = await supabaseClient
+              .from('users')
+              .select('avatar_url')
+              .eq('id', newUser.id)
+              .maybeSingle();
+
+            if (avatarData?.avatar_url) setUserAvatarUrl(avatarData.avatar_url);
+          } else {
+            setUserAvatarUrl('');
+          }
+        } catch {
+          setUserAvatarUrl('');
+        }
       } catch (e) {
         console.error('Error loading wallet profile for chat:', e);
       }
     })();
   }, [publicKey, initialized, supabaseClient]);
+
+  // Load avatars for the currently visible messages.
+  useEffect(() => {
+    if (!supabaseClient || messages.length === 0) return;
+
+    const ids = Array.from(new Set(messages.map((m) => m.user_id).filter(Boolean))).slice(0, 50);
+    if (ids.length === 0) return;
+
+    (async () => {
+      try {
+        const { data, error } = await supabaseClient
+          .from('users')
+          .select('id, avatar_url')
+          .in('id', ids);
+
+        if (error) throw error;
+
+        const next: Record<string, string> = {};
+        for (const row of data ?? []) {
+          if (row?.id && row?.avatar_url) next[row.id] = row.avatar_url;
+        }
+        setAvatarByUserId(next);
+      } catch (e) {
+        // Column might not exist yet; fall back to initials.
+        setAvatarByUserId({});
+      }
+    })();
+  }, [messages, supabaseClient]);
 
   // Load available chat rooms (UUID IDs) from Supabase.
   useEffect(() => {
@@ -367,7 +423,21 @@ export default function ChatPage() {
             <span className="font-bold text-foreground">Habit Breaker</span>
           </Link>
           <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">{userName}</span>
+            <div className="flex items-center gap-2">
+              {userAvatarUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={userAvatarUrl}
+                  alt="avatar"
+                  className="w-6 h-6 rounded-full object-cover"
+                />
+              ) : (
+                <div className="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-accent text-xs font-medium">
+                  {(userName || 'U').charAt(0).toUpperCase()}
+                </div>
+              )}
+              <span className="text-sm text-muted-foreground">{userName}</span>
+            </div>
             <Link href="/dashboard">
               <Button variant="ghost" size="sm">Dashboard</Button>
             </Link>
@@ -442,7 +512,16 @@ export default function ChatPage() {
                 >
                   {msg.user_id !== userId && (
                     <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent text-sm font-medium">
-                      {(msg.user_display_name || 'U').charAt(0).toUpperCase()}
+                      {avatarByUserId[msg.user_id] ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={avatarByUserId[msg.user_id]}
+                          alt="avatar"
+                          className="w-8 h-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        (msg.user_display_name || 'U').charAt(0).toUpperCase()
+                      )}
                     </div>
                   )}
                   <div className={`max-w-[70%] ${msg.user_id === userId ? 'order-1' : ''}`}>
