@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useWallet } from '@/lib/solana/wallet-provider';
 import { createClient } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
@@ -11,7 +11,7 @@ interface UserHabit {
   name: string;
   current_streak: number;
   best_streak?: number | null;
-  last_checkin: string;
+  last_checkin: string | null;
 }
 
 export default function DashboardPage() {
@@ -23,6 +23,7 @@ export default function DashboardPage() {
   const [dashboardError, setDashboardError] = useState<string | null>(null);
   const [checkInMessage, setCheckInMessage] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [nowTs, setNowTs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     // Wait for wallet to initialize before checking
@@ -35,6 +36,13 @@ export default function DashboardPage() {
 
     loadUserData();
   }, [publicKey, initialized]);
+
+  // Keep countdown UI updated.
+  useEffect(() => {
+    if (!initialized) return;
+    const t = window.setInterval(() => setNowTs(Date.now()), 10_000);
+    return () => window.clearInterval(t);
+  }, [initialized]);
 
   const loadUserData = async () => {
     setLoading(true);
@@ -112,74 +120,171 @@ export default function DashboardPage() {
     window.location.href = '/';
   };
 
-  const handleCheckIn = async (habitId: string) => {
+  const habitsRef = useRef<UserHabit[]>([]);
+  useEffect(() => {
+    habitsRef.current = habits;
+  }, [habits]);
+
+  const syncInProgressRef = useRef(false);
+
+  const dayMs = 86400000;
+
+  const computeCleanDays = (lastCheckin: string | null, nowMillis: number) => {
+    if (!lastCheckin) return 0;
+    const t = new Date(lastCheckin).getTime();
+    if (Number.isNaN(t)) return 0;
+    const diff = nowMillis - t;
+    if (diff < 0) return 0;
+    return Math.floor(diff / dayMs);
+  };
+
+  const computeTimeToNextCleanDay = (lastCheckin: string | null, nowMillis: number) => {
+    if (!lastCheckin) return dayMs;
+    const t = new Date(lastCheckin).getTime();
+    if (Number.isNaN(t)) return dayMs;
+    const diff = nowMillis - t;
+    if (diff < 0) return dayMs;
+    const mod = diff % dayMs;
+    return mod === 0 ? 0 : dayMs - mod;
+  };
+
+  const startStopping = async (habitId: string) => {
+    setCheckInMessage(null);
+    if (!userId) return;
+
+    const habit = habitsRef.current.find((h) => h.id === habitId);
+    if (!habit) return;
+
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+
     try {
-      setCheckInMessage(null);
-
-      const habit = habits.find(h => h.id === habitId);
-      if (!habit) return;
-
-      const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      const habitLast = habit.last_checkin ? new Date(habit.last_checkin) : null;
-
-      const diffDays = habitLast
-        ? Math.round((startOfToday.getTime() - new Date(habitLast.getFullYear(), habitLast.getMonth(), habitLast.getDate()).getTime()) / 86400000)
-        : null;
-
-      // Prevent multiple "check-ins" on the same day.
-      if (diffDays === 0) {
-        setCheckInMessage('You already checked in today.');
-        return;
-      }
-
-      // Basic streak logic:
-      // - If last check-in was yesterday => +1
-      // - If it was earlier => reset to 1
-      const nextStreak =
-        diffDays === 1 ? (habit.current_streak || 0) + 1 : 1;
-      const nextBestStreak = Math.max(habit.best_streak || 0, nextStreak);
-
-      // Update habit streak
+      // Start/Restart: record when the user started being "clean".
       await supabase
         .from('user_habits')
         .update({
-          current_streak: nextStreak,
-          best_streak: nextBestStreak,
-          last_checkin: now.toISOString(),
+          last_checkin: nowIso,
+          current_streak: 0, // will count up after 24h
+          best_streak: habit.best_streak || 0, // keep best as-is
         })
         .eq('id', habitId);
 
-      // Keep leaderboard in sync: leaderboard reads from `users.current_streak/best_streak`.
-      if (userId) {
-        const { data: userRow, error: userRowError } = await supabase
-          .from('users')
-          .select('id, current_streak, best_streak')
-          .eq('id', userId)
-          .maybeSingle();
+      // Update local immediately for UI responsiveness.
+      setHabits((prev) =>
+        prev.map((h) =>
+          h.id === habitId
+            ? {
+                ...h,
+                last_checkin: nowIso,
+                current_streak: 0,
+              }
+            : h,
+        ),
+      );
 
-        if (userRowError) throw userRowError;
+      // Sync users streak to max across habits.
+      const allHabits = habitsRef.current.map((h) =>
+        h.id === habitId ? { ...h, last_checkin: nowIso } : h,
+      );
+      const maxCurrent = Math.max(
+        ...allHabits.map((h) => computeCleanDays(h.last_checkin, now)),
+        0,
+      );
+      const maxBest = Math.max(
+        ...allHabits.map((h) => {
+          const d = computeCleanDays(h.last_checkin, now);
+          return Math.max(h.best_streak || 0, d);
+        }),
+        0,
+      );
 
-        const newUserCurrent = Math.max(userRow?.current_streak || 0, nextStreak);
-        const newUserBest = Math.max(userRow?.best_streak || 0, nextBestStreak);
+      await supabase
+        .from('users')
+        .update({
+          current_streak: maxCurrent,
+          best_streak: Math.max(maxBest, maxCurrent),
+        })
+        .eq('id', userId);
+
+      setCheckInMessage('Countdown started!');
+    } catch (error) {
+      console.error('Error starting countdown:', error);
+      setCheckInMessage((error as any)?.message || 'Failed to start countdown.');
+    }
+  };
+
+  // Every ~20s, auto-advance streak when 24h boundaries pass.
+  useEffect(() => {
+    if (!userId) return;
+
+    const syncOnce = async () => {
+      if (syncInProgressRef.current) return;
+      const now = Date.now();
+      const currentHabits = habitsRef.current;
+
+      const habitToSync = currentHabits.find((h) => {
+        const daysClean = computeCleanDays(h.last_checkin, now);
+        return daysClean > (h.current_streak || 0);
+      });
+
+      if (!habitToSync) return;
+
+      syncInProgressRef.current = true;
+      try {
+        const daysClean = computeCleanDays(habitToSync.last_checkin, now);
+        const nextBest = Math.max(habitToSync.best_streak || 0, daysClean);
+
+        await supabase
+          .from('user_habits')
+          .update({
+            current_streak: daysClean,
+            best_streak: nextBest,
+          })
+          .eq('id', habitToSync.id);
+
+        const allHabitsAfterUpdate = currentHabits.map((h) =>
+          h.id === habitToSync.id
+            ? { ...h, current_streak: daysClean, best_streak: nextBest }
+            : h,
+        );
+
+        const maxCurrent = Math.max(
+          ...allHabitsAfterUpdate.map((h) => computeCleanDays(h.last_checkin, now)),
+          0,
+        );
+        const maxBest = Math.max(
+          ...allHabitsAfterUpdate.map((h) => Math.max(h.best_streak || 0, computeCleanDays(h.last_checkin, now))),
+          0,
+        );
 
         await supabase
           .from('users')
           .update({
-            current_streak: newUserCurrent,
-            best_streak: newUserBest,
+            current_streak: maxCurrent,
+            best_streak: Math.max(maxBest, maxCurrent),
           })
           .eq('id', userId);
-      }
 
-      // Reload habits
-      loadUserData();
-      setCheckInMessage('Checked in!');
-    } catch (error) {
-      console.error('Error checking in:', error);
-      setCheckInMessage('Failed to check in. Please try again.');
-    }
-  };
+        // Update local state to prevent repeated sync calls.
+        setHabits((prev) =>
+          prev.map((h) =>
+            h.id === habitToSync.id
+              ? { ...h, current_streak: daysClean, best_streak: nextBest }
+              : h,
+          ),
+        );
+      } catch (error) {
+        console.error('Error syncing clean streak:', error);
+      } finally {
+        syncInProgressRef.current = false;
+      }
+    };
+
+    // Sync immediately, then keep updating.
+    syncOnce();
+    const t = window.setInterval(syncOnce, 20_000);
+    return () => window.clearInterval(t);
+  }, [userId]);
 
   // Show loading while wallet initializes
   if (!initialized) {
@@ -311,17 +416,43 @@ export default function DashboardPage() {
                   <Flame className="w-5 h-5 text-accent" />
                 </div>
 
-                <div className="mb-6">
-                  <div className="text-3xl font-bold text-accent">{habit.current_streak || 0}</div>
-                  <div className="text-sm text-muted-foreground">Day streak</div>
-                </div>
+                {(() => {
+                  const daysClean = computeCleanDays(habit.last_checkin, nowTs);
+                  const timeToNextMs = computeTimeToNextCleanDay(habit.last_checkin, nowTs);
+                  const totalSeconds = Math.max(0, Math.floor(timeToNextMs / 1000));
+                  const hours = Math.floor(totalSeconds / 3600);
+                  const minutes = Math.floor((totalSeconds % 3600) / 60);
+                  const seconds = totalSeconds % 60;
 
-                <Button
-                  onClick={() => handleCheckIn(habit.id)}
-                  className="w-full bg-accent hover:bg-accent/90"
-                >
-                  Check In Today
-                </Button>
+                  const nextLabel = habit.last_checkin
+                    ? daysClean >= 1
+                      ? `Next clean day in ${hours}h ${minutes}m ${seconds}s`
+                      : `Next clean day in ${hours}h ${minutes}m ${seconds}s`
+                    : 'Start when you begin being clean';
+
+                  return (
+                    <>
+                      <div className="mb-6">
+                        <div className="text-3xl font-bold text-accent">
+                          {daysClean}
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          Days clean
+                        </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          {nextLabel}
+                        </div>
+                      </div>
+
+                      <Button
+                        onClick={() => startStopping(habit.id)}
+                        className="w-full bg-accent hover:bg-accent/90"
+                      >
+                        {habit.last_checkin ? 'Restart countdown' : 'Stop habit (start)'}
+                      </Button>
+                    </>
+                  );
+                })()}
               </div>
             ))}
           </div>
