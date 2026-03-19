@@ -186,7 +186,7 @@ export default function SettingsPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background via-card to-background">
-      <main className="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+      <main className="w-full max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-6 md:py-12">
         <div className="mb-8">
           <h1 className="text-4xl font-bold text-foreground mb-2">Settings</h1>
           <p className="text-muted-foreground">
@@ -194,7 +194,7 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        <Card className="p-6 bg-card/50 backdrop-blur-sm border border-border/40">
+        <Card className="p-4 md:p-6 bg-card/50 backdrop-blur-sm border border-border/40">
           <form onSubmit={handleSave} className="space-y-4">
             <div className="space-y-2">
               <label className="text-sm font-semibold text-foreground">Username</label>
